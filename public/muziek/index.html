@@ -91,6 +91,7 @@
       <div class="eq" id="eq"></div>
     </div>
     <div class="status" id="status"></div>
+    <div class="muted" id="where" style="text-align:center"></div>
     <div class="row hidden" id="helpRow">
       <a class="btnlink" href="spotify:" id="openSpotify">🟢 Open Spotify</a>
       <button class="secondary" id="retryBtn">🔁 Opnieuw</button>
@@ -102,7 +103,7 @@
       <button class="secondary" id="revealBtn" disabled>👀 Onthul</button>
     </div>
     <details>
-      <summary>Instellingen <span style="opacity:.6">(versie 5)</span></summary>
+      <summary>Instellingen <span style="opacity:.6">(versie 6)</span></summary>
       <div class="row" style="margin-top:10px">
         <button class="secondary small" id="logoutBtn">Uitloggen</button>
         <button class="secondary small" id="devicesBtn">Apparaten checken</button>
@@ -253,7 +254,7 @@
     $('reveal').classList.add('hidden');
     $('revealBtn').disabled = false;
     showHelp(false);
-    status('Nummer starten…');
+    status('Nummer starten…'); $('where').textContent = '';
     try {
       // Bestaat dit nummer wel? (ChatGPT verzint soms links)
       try { await api('GET', '/tracks/' + id); }
@@ -295,8 +296,24 @@
         status('Spotify heeft het nummer niet overgenomen. Tik op “Open Spotify”, kom terug en tik op “Opnieuw”.', 'warn');
         return;
       }
-      $('pauseBtn').disabled = false; setPauseUi(st ? st.is_playing !== false : true);
-      status('Raad maar! 🎶');
+      const who = await accountName();
+      if (!st || !st.device) {
+        setPlaying(false); showHelp(true);
+        status('Spotify zegt dat er niets speelt bij account “' + who + '”. Is dit hetzelfde account als in de Spotify-app op je telefoon? Zo niet: Instellingen → Uitloggen en opnieuw inloggen met dat account.', 'warn');
+        return;
+      }
+      let playing = st.is_playing;
+      if (!playing) {
+        // Staat klaar maar gepauzeerd: nog één keer starten
+        await api('PUT', '/me/player/play?device_id=' + encodeURIComponent(st.device.id)).catch(() => {});
+        await wait(1200);
+        const st2 = await api('GET', '/me/player').catch(() => null);
+        playing = !!(st2 && st2.is_playing);
+      }
+      $('pauseBtn').disabled = false; setPauseUi(playing);
+      $('where').textContent = 'Speelt op: ' + st.device.name + (st.device.type ? ' (' + st.device.type + ')' : '') + ' · account: ' + who;
+      if (playing) status('Raad maar! 🎶');
+      else { showHelp(true); status('Spotify heeft het nummer klaargezet op “' + st.device.name + '” maar het speelt niet. Tik op “Open Spotify” en druk daar op play.', 'warn'); }
     } catch (e) {
       setPlaying(false); showHelp(true);
       status(explain(e), e.status === 404 ? 'warn' : 'err');
