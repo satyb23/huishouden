@@ -24,6 +24,7 @@
     button { font:inherit; border:0; border-radius:14px; padding:16px; font-size:18px; font-weight:600; cursor:pointer;
       background:var(--accent); color:#000; }
     button.secondary { background:#374151; color:var(--text); }
+    a.btnlink { display:block; text-align:center; text-decoration:none; border-radius:14px; padding:16px; font-size:18px; font-weight:600; background:#374151; color:var(--text); }
     button.small { padding:10px 14px; font-size:15px; }
     button:disabled { opacity:.5; }
     input { font:inherit; width:100%; padding:12px; border-radius:10px; border:1px solid #374151; background:#0b1220; color:var(--text); }
@@ -90,6 +91,10 @@
       <div class="eq" id="eq"></div>
     </div>
     <div class="status" id="status"></div>
+    <div class="row hidden" id="helpRow">
+      <a class="btnlink" href="spotify:" id="openSpotify">🟢 Open Spotify</a>
+      <button class="secondary" id="retryBtn">🔁 Opnieuw</button>
+    </div>
     <div class="reveal hidden" id="reveal"><div class="t" id="revealTitle"></div><div class="a" id="revealArtist"></div></div>
     <button id="scanBtn">📷 Scan kaart</button>
     <div class="row">
@@ -100,7 +105,9 @@
       <summary>Instellingen</summary>
       <div class="row" style="margin-top:10px">
         <button class="secondary small" id="logoutBtn">Uitloggen</button>
+        <button class="secondary small" id="devicesBtn">Apparaten checken</button>
       </div>
+      <p class="muted" id="devicesOut" style="margin-top:10px;white-space:pre-line"></p>
       <p class="muted" style="margin-top:10px">Tip: open eerst de Spotify-app en speel kort iets af, zodat er een “actief apparaat” is. Laat daarna deze pagina op het scherm staan – in de Spotify-app zelf is de titel wel zichtbaar.</p>
     </details>
   </section>
@@ -196,7 +203,10 @@
     const text = await res.text();
     let data = null;
     try { data = text ? JSON.parse(text) : null; } catch { /* Spotify stuurt soms geen JSON terug */ }
-    if (!res.ok) { const e = new Error(data?.error?.message || ('Fout ' + res.status)); e.status = res.status; e.reason = data?.error?.reason; throw e; }
+    if (!res.ok) {
+      const msg = data?.error?.message || data?.error_description || text.slice(0, 200) || ('Fout ' + res.status);
+      const e = new Error(msg); e.status = res.status; e.reason = data?.error?.reason; throw e;
+    }
     return data;
   }
 
@@ -208,34 +218,78 @@
     $('pauseBtn').textContent = playing ? '⏸ Pauze' : '▶️ Verder';
   }
 
-  async function pickDevice() {
+  const showHelp = on => $('helpRow').classList.toggle('hidden', !on);
+  const wait = ms => new Promise(r => setTimeout(r, ms));
+
+  async function getDevices() {
     const { devices } = await api('GET', '/me/player/devices');
-    const usable = devices.filter(d => !d.is_restricted);
-    return (usable.find(d => d.is_active) || usable.find(d => d.type === 'Smartphone') || usable[0]) || null;
+    return devices.filter(d => !d.is_restricted);
+  }
+  function pickDevice(devices) {
+    return devices.find(d => d.is_active) || devices.find(d => d.type === 'Smartphone') || devices[0] || null;
+  }
+
+  function explain(e) {
+    const m = (e.message || '').toLowerCase();
+    if (e.reason === 'PREMIUM_REQUIRED' || m.includes('premium')) return 'Spotify Premium is nodig om nummers te starten.';
+    if (m.includes('registered') || m.includes('dashboard'))
+      return 'Je Spotify-account staat niet bij je app. Ga naar developer.spotify.com/dashboard → je app → User Management en voeg je naam + Spotify-e-mail toe. Log daarna hier uit en opnieuw in.';
+    if (e.status === 404) return 'Spotify-app reageert niet. Tik op “Open Spotify”, speel kort iets af, kom terug en tik op “Opnieuw”.';
+    if (e.status === 401) return e.message;
+    return 'Spotify zegt: ' + e.message + ' (' + e.status + ')';
+  }
+
+  async function startOn(device, id) {
+    // Eerst het afspelen naar dit apparaat halen, dan het nummer starten
+    if (!device.is_active) {
+      await api('PUT', '/me/player', { device_ids: [device.id], play: false }).catch(() => {});
+      await wait(700);
+    }
+    await api('PUT', '/me/player/play?device_id=' + encodeURIComponent(device.id), { uris: ['spotify:track:' + id], position_ms: 0 });
   }
 
   async function playTrack(id) {
     currentTrack = id;
     $('reveal').classList.add('hidden');
     $('revealBtn').disabled = false;
+    showHelp(false);
     status('Nummer starten…');
     try {
-      const device = await pickDevice();
+      const device = pickDevice(await getDevices());
       if (!device) {
-        setPlaying(false);
-        status('Geen Spotify-apparaat gevonden. Open de Spotify-app, speel kort iets af en scan opnieuw.', 'warn');
+        setPlaying(false); showHelp(true);
+        status('Spotify ziet je telefoon niet. Tik op “Open Spotify”, speel kort iets af, kom terug en tik op “Opnieuw”.', 'warn');
         return;
       }
       deviceId = device.id;
-      await api('PUT', '/me/player/play?device_id=' + encodeURIComponent(deviceId), { uris: ['spotify:track:' + id], position_ms: 0 });
-      $('pauseBtn').disabled = false; setPauseUi(true);
+      try { await startOn(device, id); }
+      catch (e) { if (e.status !== 404) throw e; await wait(1000); await startOn(device, id); }
+
+      // Controleren of Spotify echt is gaan spelen
+      await wait(1500);
+      const st = await api('GET', '/me/player').catch(() => null);
+      if (st && st.item && st.item.id !== id) {
+        setPlaying(false); showHelp(true);
+        status('Spotify heeft het nummer niet overgenomen. Tik op “Open Spotify”, kom terug en tik op “Opnieuw”.', 'warn');
+        return;
+      }
+      $('pauseBtn').disabled = false; setPauseUi(st ? st.is_playing !== false : true);
       status('Raad maar! 🎶');
     } catch (e) {
-      setPlaying(false);
-      if (e.reason === 'PREMIUM_REQUIRED' || e.status === 403) status('Spotify Premium is nodig om nummers te starten.', 'err');
-      else if (e.status === 404) status('Geen actief apparaat. Open de Spotify-app, speel kort iets af en scan opnieuw.', 'warn');
-      else status(e.message, 'err');
+      setPlaying(false); showHelp(true);
+      status(explain(e), e.status === 404 ? 'warn' : 'err');
     }
+  }
+
+  async function checkDevices() {
+    const out = $('devicesOut');
+    out.textContent = 'Bezig…';
+    try {
+      const { devices } = await api('GET', '/me/player/devices');
+      out.textContent = devices.length
+        ? 'Spotify ziet:\n' + devices.map(d => `• ${d.name} (${d.type})${d.is_active ? ' – actief' : ''}${d.is_restricted ? ' – geblokkeerd' : ''}`).join('\n')
+        : 'Spotify ziet geen apparaten. Open de Spotify-app en speel kort iets af.';
+    } catch (e) { out.textContent = explain(e); }
   }
 
   // Vraag Spotify wat er echt speelt (de speler kan ook in de Spotify-app bediend zijn)
@@ -376,6 +430,8 @@
   $('cancelScan').onclick = stopScan;
   $('pauseBtn').onclick = togglePause;
   $('revealBtn').onclick = reveal;
+  $('retryBtn').onclick = () => currentTrack && playTrack(currentTrack);
+  $('devicesBtn').onclick = checkDevices;
   init();
 })();
 </script>
