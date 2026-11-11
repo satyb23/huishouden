@@ -1,0 +1,488 @@
+<!doctype html>
+<html lang="nl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#111827" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <title>Muziekquiz</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🎵</text></svg>" />
+  <script src="jsQR.js"></script>
+  <style>
+    :root { --bg:#111827; --card:#1f2937; --text:#f9fafb; --muted:#9ca3af; --accent:#1db954; --warn:#f59e0b; --err:#ef4444; }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body { margin:0; height:100%; background:var(--bg); color:var(--text);
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+    body { display:flex; flex-direction:column; align-items:center; }
+    .wrap { width:100%; max-width:480px; min-height:100%; padding:24px 16px calc(24px + env(safe-area-inset-bottom));
+      display:flex; flex-direction:column; gap:16px; }
+    h1 { margin:8px 0 0; font-size:28px; text-align:center; letter-spacing:.5px; }
+    p { margin:0; line-height:1.5; }
+    .muted { color:var(--muted); font-size:14px; }
+    .card { background:var(--card); border-radius:16px; padding:16px; display:flex; flex-direction:column; gap:12px; }
+    button { font:inherit; border:0; border-radius:14px; padding:16px; font-size:18px; font-weight:600; cursor:pointer;
+      background:var(--accent); color:#000; }
+    button.secondary { background:#374151; color:var(--text); }
+    a.btnlink { display:block; text-align:center; text-decoration:none; border-radius:14px; padding:16px; font-size:18px; font-weight:600; background:#374151; color:var(--text); }
+    button.small { padding:10px 14px; font-size:15px; }
+    button:disabled { opacity:.5; }
+    input { font:inherit; width:100%; padding:12px; border-radius:10px; border:1px solid #374151; background:#0b1220; color:var(--text); }
+    code { background:#0b1220; padding:8px; border-radius:8px; display:block; word-break:break-all; font-size:13px; }
+    .hidden { display:none !important; }
+    .row { display:flex; gap:12px; }
+    .row > * { flex:1; }
+    .status { text-align:center; min-height:22px; font-size:15px; }
+    .status.err { color:var(--err); } .status.warn { color:var(--warn); }
+
+    /* Equalizer */
+    .stage { flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:28px; min-height:320px; }
+    .logo { width:120px; height:120px; border-radius:50%; background:radial-gradient(circle at 30% 30%, #2dd36f, #0f7a35);
+      display:flex; align-items:center; justify-content:center; font-size:56px; box-shadow:0 0 60px rgba(29,185,84,.35); }
+    .playing .logo { animation: pulse 1.2s ease-in-out infinite; }
+    @keyframes pulse { 50% { transform:scale(1.06); box-shadow:0 0 90px rgba(29,185,84,.55); } }
+    .eq { display:flex; align-items:flex-end; gap:6px; height:140px; }
+    .eq span { width:14px; height:10%; border-radius:6px 6px 2px 2px;
+      background:linear-gradient(to top, #1db954, #a3e635 60%, #fde047); transition:height .3s; }
+    .playing .eq span { animation: bounce var(--d) ease-in-out infinite alternate; animation-delay: var(--dl); }
+    @keyframes bounce { 0% { height:8%; } 30% { height:var(--h1); } 60% { height:var(--h2); } 100% { height:var(--h3); } }
+
+    /* Scanner */
+    .scanner { position:fixed; inset:0; background:#000; display:flex; flex-direction:column; z-index:10; }
+    .scanner video { flex:1; width:100%; object-fit:cover; min-height:0; }
+    .scanner .frame { position:absolute; top:50%; left:50%; width:min(70vw,300px); aspect-ratio:1; transform:translate(-50%,-60%);
+      border:4px solid rgba(255,255,255,.85); border-radius:24px; box-shadow:0 0 0 100vmax rgba(0,0,0,.45); pointer-events:none; }
+    .scanner .bar { padding:16px 16px calc(16px + env(safe-area-inset-bottom)); background:#000; display:flex; flex-direction:column; gap:10px; }
+    .scanner .bar p { text-align:center; color:#ddd; }
+    .reveal { text-align:center; }
+    .reveal .t { font-size:22px; font-weight:700; } .reveal .a { color:var(--muted); }
+    details summary { cursor:pointer; color:var(--muted); font-size:14px; }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <h1>🎵 Muziekquiz</h1>
+
+  <!-- Instellen -->
+  <section id="setup" class="card hidden">
+    <p><b>Eenmalig instellen</b></p>
+    <p class="muted">1. Ga naar <b>developer.spotify.com/dashboard</b>, log in en maak een app aan (kies “Web API”).</p>
+    <p class="muted">2. Zet bij <b>Redirect URIs</b> exact dit adres:</p>
+    <code id="redirectUri"></code>
+    <p class="muted">3. Plak hieronder de <b>Client ID</b> van die app.</p>
+    <input id="clientIdInput" placeholder="Client ID" autocomplete="off" autocapitalize="off" spellcheck="false" />
+    <button id="saveClientId">Opslaan</button>
+  </section>
+
+  <!-- Inloggen -->
+  <section id="login" class="card hidden">
+    <p>Log in met je Spotify-account (Premium nodig om nummers op afstand te starten).</p>
+    <button id="loginBtn">Inloggen met Spotify</button>
+    <details>
+      <summary>Andere Client ID gebruiken</summary>
+      <button class="secondary small" id="resetClientId" style="margin-top:10px">Client ID wissen</button>
+    </details>
+  </section>
+
+  <!-- Spel -->
+  <section id="game" class="hidden" style="display:flex;flex-direction:column;gap:16px;flex:1">
+    <div class="stage" id="stage">
+      <div class="logo">🎧</div>
+      <div class="eq" id="eq"></div>
+    </div>
+    <div class="status" id="status"></div>
+    <div class="muted" id="where" style="text-align:center"></div>
+    <div class="row hidden" id="helpRow">
+      <a class="btnlink" href="spotify:" id="openSpotify">🟢 Open Spotify</a>
+      <button class="secondary" id="retryBtn">🔁 Opnieuw</button>
+    </div>
+    <div class="reveal hidden" id="reveal"><div class="t" id="revealTitle"></div><div class="a" id="revealArtist"></div></div>
+    <button id="scanBtn">📷 Scan kaart</button>
+    <div class="row">
+      <button class="secondary" id="pauseBtn" disabled>⏸ Pauze</button>
+      <button class="secondary" id="revealBtn" disabled>👀 Onthul</button>
+    </div>
+    <details>
+      <summary>Instellingen <span style="opacity:.6">(versie 6)</span></summary>
+      <div class="row" style="margin-top:10px">
+        <button class="secondary small" id="logoutBtn">Uitloggen</button>
+        <button class="secondary small" id="devicesBtn">Apparaten checken</button>
+      </div>
+      <p class="muted" id="devicesOut" style="margin-top:10px;white-space:pre-line"></p>
+      <p class="muted" style="margin-top:10px">Tip: open eerst de Spotify-app en speel kort iets af, zodat er een “actief apparaat” is. Laat daarna deze pagina op het scherm staan – in de Spotify-app zelf is de titel wel zichtbaar.</p>
+    </details>
+  </section>
+</div>
+
+<!-- Camera -->
+<div class="scanner hidden" id="scanner">
+  <video id="video" playsinline muted></video>
+  <div class="frame"></div>
+  <div class="bar">
+    <p id="scanHint">Richt de camera op de QR-code</p>
+    <button class="secondary" id="cancelScan">Annuleren</button>
+  </div>
+</div>
+<canvas id="canvas" class="hidden"></canvas>
+
+<script>
+(() => {
+  const SCOPES = 'user-modify-playback-state user-read-playback-state';
+  const REDIRECT_URI = location.origin + location.pathname;
+  const LS = {
+    get: k => { try { return localStorage.getItem(k); } catch { return null; } },
+    set: (k, v) => { try { localStorage.setItem(k, v); } catch {} },
+    del: k => { try { localStorage.removeItem(k); } catch {} },
+  };
+  const $ = id => document.getElementById(id);
+
+  // ---------- Equalizer ----------
+  const eq = $('eq');
+  for (let i = 0; i < 12; i++) {
+    const s = document.createElement('span');
+    const r = () => (25 + Math.random() * 75).toFixed(0) + '%';
+    s.style.setProperty('--d', (0.35 + Math.random() * 0.5).toFixed(2) + 's');
+    s.style.setProperty('--dl', (-Math.random()).toFixed(2) + 's');
+    s.style.setProperty('--h1', r()); s.style.setProperty('--h2', r()); s.style.setProperty('--h3', r());
+    eq.appendChild(s);
+  }
+  const setPlaying = on => $('stage').classList.toggle('playing', on);
+
+  function status(msg, kind = '') { const el = $('status'); el.textContent = msg; el.className = 'status ' + kind; }
+
+  // ---------- Schermen ----------
+  function show(view) {
+    for (const v of ['setup', 'login', 'game']) $(v).classList.toggle('hidden', v !== view);
+  }
+
+  // ---------- Auth (PKCE, geen server nodig) ----------
+  const b64url = buf => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  function randomString(n = 64) {
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+    const v = crypto.getRandomValues(new Uint8Array(n));
+    return Array.from(v, x => chars[x % chars.length]).join('');
+  }
+
+  async function login() {
+    const verifier = randomString();
+    LS.set('mq_verifier', verifier);
+    const challenge = b64url(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier)));
+    const p = new URLSearchParams({
+      client_id: LS.get('mq_client_id'), response_type: 'code', redirect_uri: REDIRECT_URI,
+      scope: SCOPES, code_challenge_method: 'S256', code_challenge: challenge,
+    });
+    location.href = 'https://accounts.spotify.com/authorize?' + p;
+  }
+
+  async function tokenRequest(params) {
+    const res = await fetch('https://accounts.spotify.com/api/token', {
+      method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ client_id: LS.get('mq_client_id'), ...params }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error_description || data.error || 'Token fout');
+    LS.set('mq_access', data.access_token);
+    LS.set('mq_expires', String(Date.now() + (data.expires_in - 60) * 1000));
+    if (data.refresh_token) LS.set('mq_refresh', data.refresh_token);
+  }
+
+  async function getToken() {
+    if (LS.get('mq_access') && Date.now() < Number(LS.get('mq_expires'))) return LS.get('mq_access');
+    if (!LS.get('mq_refresh')) throw new Error('Niet ingelogd');
+    await tokenRequest({ grant_type: 'refresh_token', refresh_token: LS.get('mq_refresh') });
+    return LS.get('mq_access');
+  }
+
+  function logout() { cachedName = null; ['mq_access', 'mq_expires', 'mq_refresh'].forEach(LS.del); init(); }
+
+  async function api(method, path, body) {
+    const res = await fetch('https://api.spotify.com/v1' + path, {
+      method, headers: { Authorization: 'Bearer ' + await getToken(), ...(body ? { 'Content-Type': 'application/json' } : {}) },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    if (res.status === 401) { logout(); throw new Error('Sessie verlopen, log opnieuw in'); }
+    const text = await res.text();
+    let data = null;
+    try { data = text ? JSON.parse(text) : null; } catch { /* Spotify stuurt soms geen JSON terug */ }
+    if (!res.ok) {
+      const msg = data?.error?.message || data?.error_description || text.slice(0, 200) || ('Fout ' + res.status);
+      const e = new Error(msg); e.status = res.status; e.reason = data?.error?.reason; throw e;
+    }
+    return data;
+  }
+
+  // ---------- Afspelen ----------
+  let currentTrack = null, isPlaying = false, deviceId = null, busy = false;
+
+  function setPauseUi(playing) {
+    isPlaying = playing; setPlaying(playing);
+    $('pauseBtn').textContent = playing ? '⏸ Pauze' : '▶️ Verder';
+  }
+
+  const showHelp = on => $('helpRow').classList.toggle('hidden', !on);
+  const wait = ms => new Promise(r => setTimeout(r, ms));
+
+  async function getDevices() {
+    const { devices } = await api('GET', '/me/player/devices');
+    return devices.filter(d => !d.is_restricted);
+  }
+  function pickDevice(devices) {
+    return devices.find(d => d.is_active) || devices.find(d => d.type === 'Smartphone') || devices[0] || null;
+  }
+
+  function explain(e) {
+    const m = (e.message || '').toLowerCase();
+    if (e.reason === 'PREMIUM_REQUIRED' || m.includes('premium')) return 'Spotify Premium is nodig om nummers te starten.';
+    if (m.includes('registered') || m.includes('dashboard'))
+      return 'Je Spotify-account staat niet bij je app. Ga naar developer.spotify.com/dashboard → je app → User Management en voeg je naam + Spotify-e-mail toe. Log daarna hier uit en opnieuw in.';
+    if (e.status === 404) return 'Spotify-app reageert niet. Tik op “Open Spotify”, speel kort iets af, kom terug en tik op “Opnieuw”.';
+    if (e.status === 401) return e.message;
+    return 'Spotify zegt: ' + e.message + ' (' + e.status + ')';
+  }
+
+  async function startOn(device, id) {
+    // Eerst het afspelen naar dit apparaat halen, dan het nummer starten
+    if (!device.is_active) {
+      await api('PUT', '/me/player', { device_ids: [device.id], play: false }).catch(() => {});
+      await wait(700);
+    }
+    await api('PUT', '/me/player/play?device_id=' + encodeURIComponent(device.id), { uris: ['spotify:track:' + id], position_ms: 0 });
+  }
+
+  async function playTrack(id) {
+    currentTrack = id;
+    $('reveal').classList.add('hidden');
+    $('revealBtn').disabled = false;
+    showHelp(false);
+    status('Nummer starten…'); $('where').textContent = '';
+    try {
+      // Bestaat dit nummer wel? (ChatGPT verzint soms links)
+      try { await api('GET', '/tracks/' + id); }
+      catch (e) {
+        if (e.status === 400 || e.status === 404) {
+          setPlaying(false);
+          status('Deze kaart verwijst naar een nummer dat niet bestaat op Spotify (code ' + id + '). De link op de kaart is fout.', 'err');
+          return;
+        }
+        throw e;
+      }
+      let device = pickDevice(await getDevices());
+      if (!device) {
+        // Lijst is leeg: kijk wat er nu speelt (die lijst mist soms de telefoon)
+        const st = await api('GET', '/me/player').catch(() => null);
+        if (st && st.device && st.device.id) device = { ...st.device, is_active: true };
+      }
+      if (device) {
+        deviceId = device.id;
+        try { await startOn(device, id); }
+        catch (e) { if (e.status !== 404) throw e; await wait(1000); await startOn(device, id); }
+      } else {
+        // Laatste poging: zonder apparaat, Spotify kiest zelf het actieve apparaat
+        try { await api('PUT', '/me/player/play', { uris: ['spotify:track:' + id], position_ms: 0 }); }
+        catch (e) {
+          if (e.status !== 404) throw e;
+          setPlaying(false); showHelp(true);
+          const who = await accountName();
+          status('Spotify ziet geen telefoon die afspeelt voor account “' + who + '”. Speelt de Spotify-app op je telefoon met precies dit account? Zo niet: log hier uit (Instellingen) en log in met hetzelfde account als in de Spotify-app.', 'warn');
+          return;
+        }
+      }
+
+      // Controleren of Spotify echt is gaan spelen
+      await wait(1500);
+      const st = await api('GET', '/me/player').catch(() => null);
+      if (st && st.item && st.item.id !== id) {
+        setPlaying(false); showHelp(true);
+        status('Spotify heeft het nummer niet overgenomen. Tik op “Open Spotify”, kom terug en tik op “Opnieuw”.', 'warn');
+        return;
+      }
+      const who = await accountName();
+      if (!st || !st.device) {
+        setPlaying(false); showHelp(true);
+        status('Spotify zegt dat er niets speelt bij account “' + who + '”. Is dit hetzelfde account als in de Spotify-app op je telefoon? Zo niet: Instellingen → Uitloggen en opnieuw inloggen met dat account.', 'warn');
+        return;
+      }
+      let playing = st.is_playing;
+      if (!playing) {
+        // Staat klaar maar gepauzeerd: nog één keer starten
+        await api('PUT', '/me/player/play?device_id=' + encodeURIComponent(st.device.id)).catch(() => {});
+        await wait(1200);
+        const st2 = await api('GET', '/me/player').catch(() => null);
+        playing = !!(st2 && st2.is_playing);
+      }
+      $('pauseBtn').disabled = false; setPauseUi(playing);
+      $('where').textContent = 'Speelt op: ' + st.device.name + (st.device.type ? ' (' + st.device.type + ')' : '') + ' · account: ' + who;
+      if (playing) status('Raad maar! 🎶');
+      else { showHelp(true); status('Spotify heeft het nummer klaargezet op “' + st.device.name + '” maar het speelt niet. Tik op “Open Spotify” en druk daar op play.', 'warn'); }
+    } catch (e) {
+      setPlaying(false); showHelp(true);
+      status(explain(e), e.status === 404 ? 'warn' : 'err');
+    }
+  }
+
+  let cachedName = null;
+  async function accountName() {
+    if (cachedName) return cachedName;
+    try { const me = await api('GET', '/me'); cachedName = me.display_name || me.id; } catch { cachedName = '?'; }
+    return cachedName;
+  }
+
+  async function checkDevices() {
+    const out = $('devicesOut');
+    out.textContent = 'Bezig…';
+    try {
+      const { devices } = await api('GET', '/me/player/devices');
+      const st = await api('GET', '/me/player').catch(() => null);
+      out.textContent = 'Ingelogd als: ' + await accountName() + '\n'
+        + (st && st.device ? 'Nu actief: ' + st.device.name + (st.is_playing ? ' (speelt)' : ' (gepauzeerd)') + '\n' : 'Nu actief: niets\n')
+        + (devices.length
+        ? 'Spotify ziet:\n' + devices.map(d => `• ${d.name} (${d.type})${d.is_active ? ' – actief' : ''}${d.is_restricted ? ' – geblokkeerd' : ''}`).join('\n')
+        : 'Spotify ziet geen apparaten. Open de Spotify-app en speel kort iets af.');
+    } catch (e) { out.textContent = explain(e); }
+  }
+
+  // Vraag Spotify wat er echt speelt (de speler kan ook in de Spotify-app bediend zijn)
+  async function playerState() {
+    const st = await api('GET', '/me/player');
+    if (st?.device?.id) deviceId = st.device.id;
+    return st;
+  }
+
+  async function togglePause() {
+    if (busy) return;
+    busy = true; $('pauseBtn').disabled = true;
+    try {
+      const st = await playerState().catch(() => null);
+      const reallyPlaying = st ? st.is_playing : isPlaying;
+      const q = deviceId ? '?device_id=' + encodeURIComponent(deviceId) : '';
+      if (reallyPlaying) {
+        await api('PUT', '/me/player/pause' + q);
+        setPauseUi(false); status('Gepauzeerd');
+      } else if (st && st.item) {
+        await api('PUT', '/me/player/play' + q);
+        setPauseUi(true); status('Raad maar! 🎶');
+      } else if (currentTrack) {
+        // Spotify is de sessie kwijt (bv. app op de achtergrond gesloten): nummer opnieuw starten
+        await playTrack(currentTrack);
+      }
+    } catch (e) {
+      if (e.status === 404) status('Spotify reageert niet. Open de Spotify-app even en probeer opnieuw.', 'warn');
+      else status('Pauze lukte niet: ' + e.message, 'err');
+    } finally {
+      busy = false; $('pauseBtn').disabled = !currentTrack;
+    }
+  }
+
+  // Knop en equalizer gelijk houden met Spotify
+  async function sync() {
+    if (!currentTrack || busy || document.hidden || !$('scanner').classList.contains('hidden')) return;
+    try {
+      const st = await playerState();
+      if (st && typeof st.is_playing === 'boolean' && st.is_playing !== isPlaying) { setPauseUi(st.is_playing); status(st.is_playing ? 'Raad maar! 🎶' : 'Gepauzeerd'); }
+    } catch { /* stil negeren */ }
+  }
+  setInterval(sync, 5000);
+  document.addEventListener('visibilitychange', sync);
+
+  async function reveal() {
+    if (!currentTrack) return;
+    try {
+      const t = await api('GET', '/tracks/' + currentTrack);
+      $('revealTitle').textContent = t.name;
+      $('revealArtist').textContent = t.artists.map(a => a.name).join(', ') + ' · ' + (t.album.release_date || '').slice(0, 4);
+      $('reveal').classList.remove('hidden');
+    } catch (e) { status(e.message, 'err'); }
+  }
+
+  // ---------- QR scannen ----------
+  function parseTrackId(text) {
+    const m = text.match(/(?:open\.spotify\.com\/(?:intl-[a-z-]+\/)?track\/|spotify:track:)([A-Za-z0-9]{22})/);
+    return m ? m[1] : null;
+  }
+
+  let stream = null, scanning = false, detector = null;
+  const video = $('video'), canvas = $('canvas'), ctx = canvas.getContext('2d', { willReadFrequently: true });
+
+  async function startScan() {
+    $('scanHint').textContent = 'Richt de camera op de QR-code';
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
+    } catch (e) {
+      status('Geen toegang tot de camera. Sta camera toe in je browser (pagina moet via https geopend zijn).', 'err');
+      return;
+    }
+    $('scanner').classList.remove('hidden');
+    video.srcObject = stream;
+    await video.play();
+    if (!detector && 'BarcodeDetector' in window) {
+      try { detector = new BarcodeDetector({ formats: ['qr_code'] }); } catch { detector = null; }
+    }
+    scanning = true;
+    requestAnimationFrame(tick);
+  }
+
+  function stopScan() {
+    scanning = false;
+    if (stream) stream.getTracks().forEach(t => t.stop());
+    stream = null;
+    $('scanner').classList.add('hidden');
+  }
+
+  let lastBad = '';
+  async function tick() {
+    if (!scanning) return;
+    if (video.readyState >= 2) {
+      let text = null;
+      try {
+        if (detector) {
+          const codes = await detector.detect(video);
+          text = codes[0]?.rawValue || null;
+        } else if (window.jsQR) {
+          const w = video.videoWidth, h = video.videoHeight, scale = Math.min(1, 640 / Math.max(w, h));
+          canvas.width = w * scale; canvas.height = h * scale;
+          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+          const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+          text = jsQR(img.data, img.width, img.height, { inversionAttempts: 'dontInvert' })?.data || null;
+        }
+      } catch { /* volgende frame */ }
+      if (text) {
+        const id = parseTrackId(text);
+        if (id) { if (navigator.vibrate) navigator.vibrate(80); stopScan(); playTrack(id); return; }
+        if (text !== lastBad) { lastBad = text; $('scanHint').textContent = 'Dit is geen Spotify-nummer (verwacht open.spotify.com/track/…)'; }
+      }
+    }
+    requestAnimationFrame(tick);
+  }
+
+  // ---------- Start ----------
+  async function init() {
+    $('redirectUri').textContent = REDIRECT_URI;
+    const params = new URLSearchParams(location.search);
+    if (params.get('code')) {
+      try { await tokenRequest({ grant_type: 'authorization_code', code: params.get('code'), redirect_uri: REDIRECT_URI, code_verifier: LS.get('mq_verifier') }); }
+      catch (e) { alert('Inloggen mislukt: ' + e.message); }
+      history.replaceState(null, '', REDIRECT_URI);
+    } else if (params.get('error')) {
+      history.replaceState(null, '', REDIRECT_URI);
+    }
+    if (!LS.get('mq_client_id')) return show('setup');
+    if (!LS.get('mq_refresh')) return show('login');
+    show('game');
+    status('Scan een kaart om te beginnen');
+  }
+
+  $('saveClientId').onclick = () => { const v = $('clientIdInput').value.trim(); if (v) { LS.set('mq_client_id', v); init(); } };
+  $('resetClientId').onclick = () => { LS.del('mq_client_id'); logout(); };
+  $('loginBtn').onclick = login;
+  $('logoutBtn').onclick = logout;
+  $('scanBtn').onclick = startScan;
+  $('cancelScan').onclick = stopScan;
+  $('pauseBtn').onclick = togglePause;
+  $('revealBtn').onclick = reveal;
+  $('retryBtn').onclick = () => currentTrack && playTrack(currentTrack);
+  $('devicesBtn').onclick = checkDevices;
+  init();
+})();
+</script>
+</body>
+</html>
