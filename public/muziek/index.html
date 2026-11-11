@@ -102,7 +102,7 @@
       <button class="secondary" id="revealBtn" disabled>👀 Onthul</button>
     </div>
     <details>
-      <summary>Instellingen <span style="opacity:.6">(versie 4)</span></summary>
+      <summary>Instellingen <span style="opacity:.6">(versie 5)</span></summary>
       <div class="row" style="margin-top:10px">
         <button class="secondary small" id="logoutBtn">Uitloggen</button>
         <button class="secondary small" id="devicesBtn">Apparaten checken</button>
@@ -192,7 +192,7 @@
     return LS.get('mq_access');
   }
 
-  function logout() { ['mq_access', 'mq_expires', 'mq_refresh'].forEach(LS.del); init(); }
+  function logout() { cachedName = null; ['mq_access', 'mq_expires', 'mq_refresh'].forEach(LS.del); init(); }
 
   async function api(method, path, body) {
     const res = await fetch('https://api.spotify.com/v1' + path, {
@@ -265,15 +265,27 @@
         }
         throw e;
       }
-      const device = pickDevice(await getDevices());
+      let device = pickDevice(await getDevices());
       if (!device) {
-        setPlaying(false); showHelp(true);
-        status('Spotify ziet je telefoon niet. Tik op “Open Spotify”, speel kort iets af, kom terug en tik op “Opnieuw”.', 'warn');
-        return;
+        // Lijst is leeg: kijk wat er nu speelt (die lijst mist soms de telefoon)
+        const st = await api('GET', '/me/player').catch(() => null);
+        if (st && st.device && st.device.id) device = { ...st.device, is_active: true };
       }
-      deviceId = device.id;
-      try { await startOn(device, id); }
-      catch (e) { if (e.status !== 404) throw e; await wait(1000); await startOn(device, id); }
+      if (device) {
+        deviceId = device.id;
+        try { await startOn(device, id); }
+        catch (e) { if (e.status !== 404) throw e; await wait(1000); await startOn(device, id); }
+      } else {
+        // Laatste poging: zonder apparaat, Spotify kiest zelf het actieve apparaat
+        try { await api('PUT', '/me/player/play', { uris: ['spotify:track:' + id], position_ms: 0 }); }
+        catch (e) {
+          if (e.status !== 404) throw e;
+          setPlaying(false); showHelp(true);
+          const who = await accountName();
+          status('Spotify ziet geen telefoon die afspeelt voor account “' + who + '”. Speelt de Spotify-app op je telefoon met precies dit account? Zo niet: log hier uit (Instellingen) en log in met hetzelfde account als in de Spotify-app.', 'warn');
+          return;
+        }
+      }
 
       // Controleren of Spotify echt is gaan spelen
       await wait(1500);
@@ -291,14 +303,24 @@
     }
   }
 
+  let cachedName = null;
+  async function accountName() {
+    if (cachedName) return cachedName;
+    try { const me = await api('GET', '/me'); cachedName = me.display_name || me.id; } catch { cachedName = '?'; }
+    return cachedName;
+  }
+
   async function checkDevices() {
     const out = $('devicesOut');
     out.textContent = 'Bezig…';
     try {
       const { devices } = await api('GET', '/me/player/devices');
-      out.textContent = devices.length
+      const st = await api('GET', '/me/player').catch(() => null);
+      out.textContent = 'Ingelogd als: ' + await accountName() + '\n'
+        + (st && st.device ? 'Nu actief: ' + st.device.name + (st.is_playing ? ' (speelt)' : ' (gepauzeerd)') + '\n' : 'Nu actief: niets\n')
+        + (devices.length
         ? 'Spotify ziet:\n' + devices.map(d => `• ${d.name} (${d.type})${d.is_active ? ' – actief' : ''}${d.is_restricted ? ' – geblokkeerd' : ''}`).join('\n')
-        : 'Spotify ziet geen apparaten. Open de Spotify-app en speel kort iets af.';
+        : 'Spotify ziet geen apparaten. Open de Spotify-app en speel kort iets af.');
     } catch (e) { out.textContent = explain(e); }
   }
 
