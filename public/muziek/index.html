@@ -102,7 +102,7 @@
       <button class="secondary" id="revealBtn" disabled>👀 Onthul</button>
     </div>
     <details>
-      <summary>Instellingen</summary>
+      <summary>Instellingen <span style="opacity:.6">(versie 4)</span></summary>
       <div class="row" style="margin-top:10px">
         <button class="secondary small" id="logoutBtn">Uitloggen</button>
         <button class="secondary small" id="devicesBtn">Apparaten checken</button>
@@ -255,6 +255,16 @@
     showHelp(false);
     status('Nummer starten…');
     try {
+      // Bestaat dit nummer wel? (ChatGPT verzint soms links)
+      try { await api('GET', '/tracks/' + id); }
+      catch (e) {
+        if (e.status === 400 || e.status === 404) {
+          setPlaying(false);
+          status('Deze kaart verwijst naar een nummer dat niet bestaat op Spotify (code ' + id + '). De link op de kaart is fout.', 'err');
+          return;
+        }
+        throw e;
+      }
       const device = pickDevice(await getDevices());
       if (!device) {
         setPlaying(false); showHelp(true);
