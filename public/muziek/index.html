@@ -194,13 +194,19 @@
     });
     if (res.status === 401) { logout(); throw new Error('Sessie verlopen, log opnieuw in'); }
     const text = await res.text();
-    const data = text ? JSON.parse(text) : null;
+    let data = null;
+    try { data = text ? JSON.parse(text) : null; } catch { /* Spotify stuurt soms geen JSON terug */ }
     if (!res.ok) { const e = new Error(data?.error?.message || ('Fout ' + res.status)); e.status = res.status; e.reason = data?.error?.reason; throw e; }
     return data;
   }
 
   // ---------- Afspelen ----------
-  let currentTrack = null, isPlaying = false;
+  let currentTrack = null, isPlaying = false, deviceId = null, busy = false;
+
+  function setPauseUi(playing) {
+    isPlaying = playing; setPlaying(playing);
+    $('pauseBtn').textContent = playing ? '⏸ Pauze' : '▶️ Verder';
+  }
 
   async function pickDevice() {
     const { devices } = await api('GET', '/me/player/devices');
@@ -220,9 +226,9 @@
         status('Geen Spotify-apparaat gevonden. Open de Spotify-app, speel kort iets af en scan opnieuw.', 'warn');
         return;
       }
-      await api('PUT', '/me/player/play?device_id=' + encodeURIComponent(device.id), { uris: ['spotify:track:' + id], position_ms: 0 });
-      isPlaying = true; setPlaying(true);
-      $('pauseBtn').disabled = false; $('pauseBtn').textContent = '⏸ Pauze';
+      deviceId = device.id;
+      await api('PUT', '/me/player/play?device_id=' + encodeURIComponent(deviceId), { uris: ['spotify:track:' + id], position_ms: 0 });
+      $('pauseBtn').disabled = false; setPauseUi(true);
       status('Raad maar! 🎶');
     } catch (e) {
       setPlaying(false);
@@ -232,12 +238,48 @@
     }
   }
 
-  async function togglePause() {
-    try {
-      if (isPlaying) { await api('PUT', '/me/player/pause'); isPlaying = false; setPlaying(false); $('pauseBtn').textContent = '▶️ Verder'; status('Gepauzeerd'); }
-      else { await api('PUT', '/me/player/play'); isPlaying = true; setPlaying(true); $('pauseBtn').textContent = '⏸ Pauze'; status('Raad maar! 🎶'); }
-    } catch (e) { status(e.message, 'err'); }
+  // Vraag Spotify wat er echt speelt (de speler kan ook in de Spotify-app bediend zijn)
+  async function playerState() {
+    const st = await api('GET', '/me/player');
+    if (st?.device?.id) deviceId = st.device.id;
+    return st;
   }
+
+  async function togglePause() {
+    if (busy) return;
+    busy = true; $('pauseBtn').disabled = true;
+    try {
+      const st = await playerState().catch(() => null);
+      const reallyPlaying = st ? st.is_playing : isPlaying;
+      const q = deviceId ? '?device_id=' + encodeURIComponent(deviceId) : '';
+      if (reallyPlaying) {
+        await api('PUT', '/me/player/pause' + q);
+        setPauseUi(false); status('Gepauzeerd');
+      } else if (st && st.item) {
+        await api('PUT', '/me/player/play' + q);
+        setPauseUi(true); status('Raad maar! 🎶');
+      } else if (currentTrack) {
+        // Spotify is de sessie kwijt (bv. app op de achtergrond gesloten): nummer opnieuw starten
+        await playTrack(currentTrack);
+      }
+    } catch (e) {
+      if (e.status === 404) status('Spotify reageert niet. Open de Spotify-app even en probeer opnieuw.', 'warn');
+      else status('Pauze lukte niet: ' + e.message, 'err');
+    } finally {
+      busy = false; $('pauseBtn').disabled = !currentTrack;
+    }
+  }
+
+  // Knop en equalizer gelijk houden met Spotify
+  async function sync() {
+    if (!currentTrack || busy || document.hidden || !$('scanner').classList.contains('hidden')) return;
+    try {
+      const st = await playerState();
+      if (st && typeof st.is_playing === 'boolean' && st.is_playing !== isPlaying) { setPauseUi(st.is_playing); status(st.is_playing ? 'Raad maar! 🎶' : 'Gepauzeerd'); }
+    } catch { /* stil negeren */ }
+  }
+  setInterval(sync, 5000);
+  document.addEventListener('visibilitychange', sync);
 
   async function reveal() {
     if (!currentTrack) return;
