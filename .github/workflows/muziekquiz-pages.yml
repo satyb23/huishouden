@@ -1,0 +1,31 @@
+name: Muziekquiz op GitHub Pages
+
+# Kopieert public/muziek naar de branch gh-pages; GitHub Pages serveert die branch.
+on:
+  push:
+    branches: [main]
+    paths: ['public/muziek/**', '.github/workflows/muziekquiz-pages.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Publiceer naar gh-pages
+        run: |
+          cp -r public/muziek "$RUNNER_TEMP/site"
+          touch "$RUNNER_TEMP/site/.nojekyll"
+          cd "$RUNNER_TEMP/site"
+          git init -q -b gh-pages
+          git add -A
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            commit -qm "Muziekquiz publiceren (${GITHUB_SHA::7})"
+          git push -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" gh-pages
